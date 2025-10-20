@@ -292,11 +292,9 @@ def _get_model_fields(
 def _get_field_default(field: PydanticField) -> typing.Any:
     try:
         value = field.get_default()  # type: ignore # Pydantic < v1.10.15
-    except:
+    except Exception:
         value = field.default
     if IS_PYDANTIC_V2:
-        from pydantic_core import PydanticUndefined
-
         if value == PydanticUndefined:
             return None
         return value
