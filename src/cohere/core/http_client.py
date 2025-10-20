@@ -10,13 +10,14 @@ from contextlib import asynccontextmanager, contextmanager
 from random import random
 
 import httpx
+from httpx._types import RequestFiles
+
 from .file import File, convert_file_dict_to_httpx_tuples
 from .force_multipart import FORCE_MULTIPART
 from .jsonable_encoder import jsonable_encoder
 from .query_encoder import encode_query
 from .remove_none_from_dict import remove_none_from_dict
 from .request_options import RequestOptions
-from httpx._types import RequestFiles
 
 INITIAL_RETRY_DELAY_SECONDS = 0.5
 MAX_RETRY_DELAY_SECONDS = 10
@@ -397,72 +398,53 @@ class AsyncHttpClient:
             else self.base_timeout()
         )
 
-        request_files: typing.Optional[RequestFiles] = (
-            convert_file_dict_to_httpx_tuples(remove_omit_from_dict(remove_none_from_dict(files), omit))
-            if (files is not None and files is not omit and isinstance(files, dict))
-            else None
-        )
+        request_files: typing.Optional[RequestFiles] = None
+        if files is not None and files is not omit and isinstance(files, dict):
+            request_files = await self._convert_files(files, omit)
 
-        if (request_files is None or len(request_files) == 0) and force_multipart:
+        if (
+            request_files is None or (hasattr(request_files, "__len__") and len(request_files) == 0)
+        ) and force_multipart:
             request_files = FORCE_MULTIPART
 
         json_body, data_body = get_request_body(json=json, data=data, request_options=request_options, omit=omit)
 
-        # Add the input to each of these and do None-safety checks
-        response = await self.httpx_client.request(
-            method=method,
-            url=urllib.parse.urljoin(f"{base_url}/", path),
-            headers=jsonable_encoder(
-                remove_none_from_dict(
-                    {
-                        **self.base_headers(),
-                        **(headers if headers is not None else {}),
-                        **(request_options.get("additional_headers", {}) or {} if request_options is not None else {}),
-                    }
-                )
-            ),
-            params=encode_query(
-                jsonable_encoder(
-                    remove_none_from_dict(
-                        remove_omit_from_dict(
-                            {
-                                **(params if params is not None else {}),
-                                **(
-                                    request_options.get("additional_query_parameters", {}) or {}
-                                    if request_options is not None
-                                    else {}
-                                ),
-                            },
-                            omit,
-                        )
-                    )
-                )
-            ),
-            json=json_body,
-            data=data_body,
-            content=content,
-            files=request_files,
-            timeout=timeout,
-        )
+        base_headers_merged = {
+            **self.base_headers(),
+            **(headers if headers is not None else {}),
+            **(request_options.get("additional_headers", {}) or {} if request_options is not None else {}),
+        }
+        encoded_headers = await self._encode_headers(base_headers_merged)
 
+        base_params_merged = {
+            **(params if params is not None else {}),
+            **(request_options.get("additional_query_parameters", {}) or {} if request_options is not None else {}),
+        }
+        encoded_params = await self._encode_params(remove_omit_from_dict(base_params_merged, omit))
+
+        url = urllib.parse.urljoin(f"{base_url}/", path)
+
+        attempt = retries
         max_retries: int = request_options.get("max_retries", 0) if request_options is not None else 0
-        if _should_retry(response=response):
-            if max_retries > retries:
-                await asyncio.sleep(_retry_timeout(response=response, retries=retries))
-                return await self.request(
-                    path=path,
-                    method=method,
-                    base_url=base_url,
-                    params=params,
-                    json=json,
-                    content=content,
-                    files=files,
-                    headers=headers,
-                    request_options=request_options,
-                    retries=retries + 1,
-                    omit=omit,
-                )
-        return response
+
+        while True:
+            response = await self.httpx_client.request(
+                method=method,
+                url=url,
+                headers=encoded_headers,
+                params=encoded_params,
+                json=json_body,
+                data=data_body,
+                content=content,
+                files=request_files,
+                timeout=timeout,
+            )
+            if _should_retry(response=response):
+                if max_retries > attempt:
+                    await asyncio.sleep(_retry_timeout(response=response, retries=attempt))
+                    attempt += 1
+                    continue
+            return response
 
     @asynccontextmanager
     async def stream(
@@ -541,3 +523,30 @@ class AsyncHttpClient:
             timeout=timeout,
         ) as stream:
             yield stream
+
+    async def _encode_headers(self, headers: typing.Dict[str, typing.Any]) -> typing.Dict[str, typing.Any]:
+        # If headers dict is large, offload to thread so we don't block event loop.
+        if len(headers) > 40:
+            return await asyncio.to_thread(jsonable_encoder, remove_none_from_dict(headers))
+        return jsonable_encoder(remove_none_from_dict(headers))
+
+    async def _encode_params(self, params: typing.Dict[str, typing.Any]) -> typing.Any:
+        # If params dict is large, offload to thread.
+        if len(params) > 40:
+            params_dict = await asyncio.to_thread(remove_none_from_dict, params)
+            encoded_omit = await asyncio.to_thread(remove_omit_from_dict, params_dict, None)
+            encoded = await asyncio.to_thread(jsonable_encoder, encoded_omit)
+            return encode_query(encoded)
+        result = encode_query(jsonable_encoder(remove_none_from_dict(remove_omit_from_dict(params, None))))
+        return result
+
+    async def _convert_files(self, files, omit):
+        # Offload to thread if files dictionary is large (file operations are usually I/O-bound but dict conversion is fast)
+        if isinstance(files, dict) and len(files) > 5:
+            files_filtered = await asyncio.to_thread(remove_none_from_dict, files)
+            files_processed = await asyncio.to_thread(remove_omit_from_dict, files_filtered, omit)
+            httpx_tuples = await asyncio.to_thread(convert_file_dict_to_httpx_tuples, files_processed)
+            return httpx_tuples
+        files_filtered = remove_none_from_dict(files) if isinstance(files, dict) else files
+        files_processed = remove_omit_from_dict(files_filtered, omit) if isinstance(files, dict) else files
+        return convert_file_dict_to_httpx_tuples(files_processed) if isinstance(files, dict) else None
