@@ -8,43 +8,50 @@ import pydantic
 # Flattens dicts to be of the form {"key[subkey][subkey2]": value} where value is not a dict
 def traverse_query_dict(dict_flat: Dict[str, Any], key_prefix: Optional[str] = None) -> List[Tuple[str, Any]]:
     result = []
+    append = result.append
+    extend = result.extend
+    # Cache isinstance for dict and list for speed
+    dict_type = dict
+    list_type = list
     for k, v in dict_flat.items():
         key = f"{key_prefix}[{k}]" if key_prefix is not None else k
-        if isinstance(v, dict):
-            result.extend(traverse_query_dict(v, key))
-        elif isinstance(v, list):
+        if isinstance(v, dict_type):
+            extend(traverse_query_dict(v, key))
+        elif isinstance(v, list_type):
+            # Avoid repeated isinstance(arr_v, dict) calls when possible
             for arr_v in v:
-                if isinstance(arr_v, dict):
-                    result.extend(traverse_query_dict(arr_v, key))
+                if isinstance(arr_v, dict_type):
+                    extend(traverse_query_dict(arr_v, key))
                 else:
-                    result.append((key, arr_v))
+                    append((key, arr_v))
         else:
-            result.append((key, v))
+            append((key, v))
     return result
 
 
 def single_query_encoder(query_key: str, query_value: Any) -> List[Tuple[str, Any]]:
-    if isinstance(query_value, pydantic.BaseModel) or isinstance(query_value, dict):
-        if isinstance(query_value, pydantic.BaseModel):
-            obj_dict = query_value.dict(by_alias=True)
-        else:
-            obj_dict = query_value
+    BaseModel = pydantic.BaseModel
+    dict_type = dict
+    list_type = list
+    # Avoid repeating isinstance twice
+    if isinstance(query_value, BaseModel):
+        obj_dict = query_value.dict(by_alias=True)
         return traverse_query_dict(obj_dict, query_key)
-    elif isinstance(query_value, list):
+    elif isinstance(query_value, dict_type):
+        return traverse_query_dict(query_value, query_key)
+    elif isinstance(query_value, list_type):
         encoded_values: List[Tuple[str, Any]] = []
+        append = encoded_values.append
+        extend = encoded_values.extend
         for value in query_value:
-            if isinstance(value, pydantic.BaseModel) or isinstance(value, dict):
-                if isinstance(value, pydantic.BaseModel):
-                    obj_dict = value.dict(by_alias=True)
-                elif isinstance(value, dict):
-                    obj_dict = value
-
-                encoded_values.extend(single_query_encoder(query_key, obj_dict))
+            if isinstance(value, BaseModel):
+                obj_dict = value.dict(by_alias=True)
+                extend(single_query_encoder(query_key, obj_dict))
+            elif isinstance(value, dict_type):
+                extend(single_query_encoder(query_key, value))
             else:
-                encoded_values.append((query_key, value))
-
+                append((query_key, value))
         return encoded_values
-
     return [(query_key, query_value)]
 
 
