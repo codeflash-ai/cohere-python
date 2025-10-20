@@ -20,6 +20,9 @@ class BaseClientWrapper:
         self._base_url = base_url
         self._timeout = timeout
 
+        # Cache the token type to avoid checking isinstance at each call
+        self._is_token_str = isinstance(token, str)
+
     def get_headers(self) -> typing.Dict[str, str]:
         headers: typing.Dict[str, str] = {
             "User-Agent": "cohere/5.19.0",
@@ -33,7 +36,7 @@ class BaseClientWrapper:
         return headers
 
     def _get_token(self) -> str:
-        if isinstance(self._token, str):
+        if self._is_token_str:
             return self._token
         else:
             return self._token()
