@@ -32,6 +32,8 @@ from .datetime_utils import serialize_datetime
 from .serialization import convert_and_respect_annotation_metadata
 from typing_extensions import TypeAlias
 
+_DEFAULT_KWARGS = {"by_alias": True, "exclude_unset": True}
+
 T = TypeVar("T")
 Model = TypeVar("Model", bound=pydantic.BaseModel)
 
@@ -84,11 +86,14 @@ class UniversalBaseModel(pydantic.BaseModel):
         return super().construct(_fields_set, **dealiased_object)
 
     def json(self, **kwargs: Any) -> str:
-        kwargs_with_defaults = {
-            "by_alias": True,
-            "exclude_unset": True,
-            **kwargs,
-        }
+        # Fast path for no user-provided keyword overrides.
+        if not kwargs:
+            # IS_PYDANTIC_V2 must be visible in this scope—assume global as in original codebase.
+            if IS_PYDANTIC_V2:
+                return super().model_dump_json(**_DEFAULT_KWARGS)  # type: ignore[misc]
+            return super().json(**_DEFAULT_KWARGS)
+        # Only merge when kwargs is present.
+        kwargs_with_defaults = {**_DEFAULT_KWARGS, **kwargs}
         if IS_PYDANTIC_V2:
             return super().model_dump_json(**kwargs_with_defaults)  # type: ignore[misc]
         return super().json(**kwargs_with_defaults)
