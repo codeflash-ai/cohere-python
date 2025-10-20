@@ -93,10 +93,7 @@ def _get_tokenizer_config_size(tokenizer_url: str) -> float:
     # Get the size of the tokenizer config before downloading it.
     # Content-Length is not always present in the headers (if transfer-encoding: chunked).
     head_response = requests.head(tokenizer_url)
-    size = None
-    for header in ["x-goog-stored-content-length", "Content-Length"]:
-        size = head_response.headers.get(header)
-        if size:
-            break
+    headers = head_response.headers
+    size = headers.get("x-goog-stored-content-length") or headers.get("Content-Length")
 
     return round(int(typing.cast(int, size)) / 1024 / 1024, 2)
