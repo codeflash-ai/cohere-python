@@ -1,11 +1,12 @@
-from .response import CohereObject
-from .error import CohereError
-from .mode import Mode
-from typing import List, Optional, Generator, Dict, Any, Union
-from enum import Enum
 import json
+from enum import Enum
+from typing import Any, Dict, Generator, List, Optional, Union
+
+from .mode import Mode
+from .response import CohereObject
 
 # Tools
+
 
 class ToolParameterDefinitionsValue(CohereObject, dict):
     def __init__(
@@ -47,7 +48,9 @@ class ToolCall(CohereObject, dict):
         generation_id: str,
         **kwargs,
     ) -> None:
-        super().__init__(**kwargs)
+        # Bypass super().__init__ if kwargs is empty (small perf win)
+        if kwargs:
+            super().__init__(**kwargs)
         self.__dict__ = self
         self.name = name
         self.parameters = parameters
@@ -55,10 +58,12 @@ class ToolCall(CohereObject, dict):
 
     @classmethod
     def from_dict(cls, tool_call_res: Dict[str, Any]) -> "ToolCall":
+        # Use local variable lookups for keys (faster than key lookups in tight loop)
+        get = tool_call_res.get
         return cls(
-            name=tool_call_res.get("name"),
-            parameters=tool_call_res.get("parameters"),
-            generation_id=tool_call_res.get("generation_id"),
+            name=get("name"),
+            parameters=get("parameters"),
+            generation_id=get("generation_id"),
         )
 
     @classmethod
@@ -66,9 +71,17 @@ class ToolCall(CohereObject, dict):
         if tool_calls_res is None or not isinstance(tool_calls_res, list):
             return None
 
-        return [ToolCall.from_dict(tc) for tc in tool_calls_res]
+        # Use localize variables for improved lookup during iteration
+        from_dict = cls.from_dict
+        # Preallocate list for performance if input is not enormous
+        result = [None] * len(tool_calls_res)
+        for idx, tc in enumerate(tool_calls_res):
+            result[idx] = from_dict(tc)
+        return result
+
 
 # Chat
+
 
 class Chat(CohereObject):
     def __init__(
@@ -119,9 +132,11 @@ class Chat(CohereObject):
             tool_calls=ToolCall.from_list(response.get("tool_calls")),  # optional
         )
 
+
 # ---------------|
 # Steaming event |
 # ---------------|
+
 
 class StreamEvent(str, Enum):
     STREAM_START = "stream-start"
@@ -131,6 +146,7 @@ class StreamEvent(str, Enum):
     TOOL_CALLS_GENERATION = "tool-calls-generation"
     CITATION_GENERATION = "citation-generation"
     STREAM_END = "stream-end"
+
 
 class StreamResponse(CohereObject):
     def __init__(
@@ -218,6 +234,7 @@ class ChatToolCallsGenerationEvent(StreamResponse):
     ) -> None:
         super().__init__(**kwargs)
         self.tool_calls = tool_calls
+
 
 class StreamingChat(CohereObject):
     def __init__(self, stream_response, mode):
