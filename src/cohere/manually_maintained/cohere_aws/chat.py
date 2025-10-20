@@ -1,11 +1,12 @@
-from .response import CohereObject
-from .error import CohereError
-from .mode import Mode
-from typing import List, Optional, Generator, Dict, Any, Union
-from enum import Enum
 import json
+from enum import Enum
+from typing import Any, Dict, Generator, List, Optional, Union
+
+from .mode import Mode
+from .response import CohereObject
 
 # Tools
+
 
 class ToolParameterDefinitionsValue(CohereObject, dict):
     def __init__(
@@ -66,9 +67,12 @@ class ToolCall(CohereObject, dict):
         if tool_calls_res is None or not isinstance(tool_calls_res, list):
             return None
 
-        return [ToolCall.from_dict(tc) for tc in tool_calls_res]
+        from_dict = cls.from_dict
+        return list(map(from_dict, tool_calls_res))
+
 
 # Chat
+
 
 class Chat(CohereObject):
     def __init__(
@@ -119,9 +123,11 @@ class Chat(CohereObject):
             tool_calls=ToolCall.from_list(response.get("tool_calls")),  # optional
         )
 
+
 # ---------------|
 # Steaming event |
 # ---------------|
+
 
 class StreamEvent(str, Enum):
     STREAM_START = "stream-start"
@@ -131,6 +137,7 @@ class StreamEvent(str, Enum):
     TOOL_CALLS_GENERATION = "tool-calls-generation"
     CITATION_GENERATION = "citation-generation"
     STREAM_END = "stream-end"
+
 
 class StreamResponse(CohereObject):
     def __init__(
@@ -218,6 +225,7 @@ class ChatToolCallsGenerationEvent(StreamResponse):
     ) -> None:
         super().__init__(**kwargs)
         self.tool_calls = tool_calls
+
 
 class StreamingChat(CohereObject):
     def __init__(self, stream_response, mode):
