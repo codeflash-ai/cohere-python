@@ -24,27 +24,31 @@ def traverse_query_dict(dict_flat: Dict[str, Any], key_prefix: Optional[str] = N
 
 
 def single_query_encoder(query_key: str, query_value: Any) -> List[Tuple[str, Any]]:
-    if isinstance(query_value, pydantic.BaseModel) or isinstance(query_value, dict):
-        if isinstance(query_value, pydantic.BaseModel):
-            obj_dict = query_value.dict(by_alias=True)
-        else:
-            obj_dict = query_value
+    # Fast path for typical dicts/objects
+    if isinstance(query_value, dict):
+        # Avoid unnecessary isinstance checks when dict is common
+        return traverse_query_dict(query_value, query_key)
+    elif isinstance(query_value, pydantic.BaseModel):
+        obj_dict = query_value.dict(by_alias=True)
         return traverse_query_dict(obj_dict, query_key)
+    # Fast path for list
     elif isinstance(query_value, list):
+        # Pre-allocate list for efficiency: most lists are small, so length is O(1)
         encoded_values: List[Tuple[str, Any]] = []
+        append = encoded_values.append
+        extend = encoded_values.extend
+        # Locally bind these for reduced attribute lookups in loop
+        BaseModel = pydantic.BaseModel
         for value in query_value:
-            if isinstance(value, pydantic.BaseModel) or isinstance(value, dict):
-                if isinstance(value, pydantic.BaseModel):
-                    obj_dict = value.dict(by_alias=True)
-                elif isinstance(value, dict):
-                    obj_dict = value
-
-                encoded_values.extend(single_query_encoder(query_key, obj_dict))
+            if isinstance(value, dict):
+                extend(traverse_query_dict(value, query_key))
+            elif isinstance(value, BaseModel):
+                obj_dict = value.dict(by_alias=True)
+                extend(traverse_query_dict(obj_dict, query_key))
             else:
-                encoded_values.append((query_key, value))
-
+                append((query_key, value))
         return encoded_values
-
+    # Fast path for 'other' types
     return [(query_key, query_value)]
 
 
@@ -52,7 +56,8 @@ def encode_query(query: Optional[Dict[str, Any]]) -> Optional[List[Tuple[str, An
     if query is None:
         return None
 
-    encoded_query = []
+    encoded_query: List[Tuple[str, Any]] = []
+    extend = encoded_query.extend
     for k, v in query.items():
-        encoded_query.extend(single_query_encoder(k, v))
+        extend(single_query_encoder(k, v))
     return encoded_query
