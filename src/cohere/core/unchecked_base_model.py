@@ -129,9 +129,12 @@ def _convert_undiscriminated_union_type(union_type: typing.Type[typing.Any], obj
     if typing.Any in inner_types:
         return object_
 
+    isclass = inspect.isclass
+    issubclass_ = issubclass
+
     for inner_type in inner_types:
         try:
-            if inspect.isclass(inner_type) and issubclass(inner_type, pydantic.BaseModel):
+            if isclass(inner_type) and issubclass_(inner_type, pydantic.BaseModel):
                 # Attempt a validated parse until one works
                 return parse_obj_as(inner_type, object_)
         except Exception:
@@ -178,6 +181,7 @@ def construct_type(*, type_: typing.Type[typing.Any], object_: typing.Any) -> ty
     if object_ is None:
         return None
 
+    # Memoized type ops
     base_type = get_origin(type_) or type_
     is_annotated = base_type == typing_extensions.Annotated
     maybe_annotation_members = get_args(type_)
@@ -189,7 +193,6 @@ def construct_type(*, type_: typing.Type[typing.Any], object_: typing.Any) -> ty
     if base_type == dict:
         if not isinstance(object_, typing.Mapping):
             return object_
-
         key_type, items_type = get_args(type_)
         d = {
             construct_type(object_=key, type_=key_type): construct_type(object_=item, type_=items_type)
@@ -200,30 +203,31 @@ def construct_type(*, type_: typing.Type[typing.Any], object_: typing.Any) -> ty
     if base_type == list:
         if not isinstance(object_, list):
             return object_
-
         inner_type = get_args(type_)[0]
+        # List comp is faster than building up a list with append
         return [construct_type(object_=entry, type_=inner_type) for entry in object_]
 
     if base_type == set:
         if not isinstance(object_, set) and not isinstance(object_, list):
             return object_
-
         inner_type = get_args(type_)[0]
         return {construct_type(object_=entry, type_=inner_type) for entry in object_}
 
     if is_union(base_type) or is_annotated_union:
         return _convert_union_type(type_, object_)
 
+    isclass = inspect.isclass
+    issubclass_ = issubclass
     # Cannot do an `issubclass` with a literal type, let's also just confirm we have a class before this call
     if (
         object_ is not None
         and not is_literal_type(type_)
         and (
-            (inspect.isclass(base_type) and issubclass(base_type, pydantic.BaseModel))
+            (isclass(base_type) and issubclass_(base_type, pydantic.BaseModel))
             or (
                 is_annotated
-                and inspect.isclass(maybe_annotation_members[0])
-                and issubclass(maybe_annotation_members[0], pydantic.BaseModel)
+                and isclass(maybe_annotation_members[0])
+                and issubclass_(maybe_annotation_members[0], pydantic.BaseModel)
             )
         )
     ):
