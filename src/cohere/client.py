@@ -1,24 +1,23 @@
 import asyncio
+import logging
 import os
 import typing
 from concurrent.futures import ThreadPoolExecutor
-from tokenizers import Tokenizer  # type: ignore
-import logging
 
 import httpx
-
-from cohere.types.detokenize_response import DetokenizeResponse
-from cohere.types.tokenize_response import TokenizeResponse
-
-from . import EmbedResponse, EmbedInputType, EmbeddingType, EmbedRequestTruncate
-from .base_client import BaseCohere, AsyncBaseCohere, OMIT
+from . import EmbeddingType, EmbedInputType, EmbedRequestTruncate, EmbedResponse
+from .base_client import OMIT, AsyncBaseCohere, BaseCohere
 from .config import embed_batch_size
 from .core import RequestOptions
 from .environment import ClientEnvironment
-from .manually_maintained.cache import CacheMixin
 from .manually_maintained import tokenizers as local_tokenizers
+from .manually_maintained.cache import CacheMixin
 from .overrides import run_overrides
-from .utils import wait, async_wait, merge_embed_responses, SyncSdkUtils, AsyncSdkUtils
+from .utils import AsyncSdkUtils, SyncSdkUtils, async_wait, merge_embed_responses, wait
+from tokenizers import Tokenizer  # type: ignore
+
+from cohere.types.detokenize_response import DetokenizeResponse
+from cohere.types.tokenize_response import TokenizeResponse
 
 logger = logging.getLogger(__name__)
 run_overrides()
@@ -202,7 +201,7 @@ class Client(BaseCohere, CacheMixin):
                 request_options=request_options,
             )
 
-        textsarr: typing.Sequence[str]  = texts if texts is not OMIT and texts is not None else []
+        textsarr: typing.Sequence[str] = texts if texts is not OMIT and texts is not None else []
         texts_batches = [textsarr[i : i + embed_batch_size] for i in range(0, len(textsarr), embed_batch_size)]
 
         responses = [
@@ -394,7 +393,7 @@ class AsyncClient(AsyncBaseCohere, CacheMixin):
                 request_options=request_options,
             )
 
-        textsarr: typing.Sequence[str]  = texts if texts is not OMIT and texts is not None else []
+        textsarr: typing.Sequence[str] = texts if texts is not OMIT and texts is not None else []
         texts_batches = [textsarr[i : i + embed_batch_size] for i in range(0, len(textsarr), embed_batch_size)]
 
         responses = typing.cast(
@@ -516,4 +515,7 @@ def _get_api_key_from_environment() -> typing.Optional[str]:
     Retrieves the Cohere API key from specific environment variables.
     CO_API_KEY is preferred (and documented) COHERE_API_KEY is accepted (but not documented).
     """
-    return os.getenv("CO_API_KEY", os.getenv("COHERE_API_KEY"))
+    api_key = os.environ.get("CO_API_KEY")
+    if api_key is not None:
+        return api_key
+    return os.environ.get("COHERE_API_KEY")
