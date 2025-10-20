@@ -3,9 +3,12 @@
 # nopycln: file
 import datetime as dt
 from collections import defaultdict
+from functools import lru_cache
 from typing import Any, Callable, ClassVar, Dict, List, Mapping, Optional, Set, Tuple, Type, TypeVar, Union, cast
 
 import pydantic
+
+from cohere.core.serialization import convert_and_respect_annotation_metadata
 
 IS_PYDANTIC_V2 = pydantic.VERSION.startswith("2.")
 
@@ -253,3 +256,24 @@ def _get_field_default(field: PydanticField) -> Any:
             return None
         return value
     return value
+
+
+# Memoization for type operations
+@lru_cache(maxsize=128)
+def get_args(type_: Any):
+    try:
+        return type_.__args__
+    except AttributeError:
+        import typing_extensions
+
+        return typing_extensions.get_args(type_)
+
+
+@lru_cache(maxsize=128)
+def get_origin(type_: Any):
+    try:
+        return type_.__origin__
+    except AttributeError:
+        import typing_extensions
+
+        return typing_extensions.get_origin(type_)
