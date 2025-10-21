@@ -57,7 +57,7 @@ class Reranking(CohereObject):
         return str(self.results)
 
     def __repr__(self) -> str:
-        return self.results.__repr__()
+        return repr(self.results)
 
     def __iter__(self) -> Iterator:
         return iter(self.results)
