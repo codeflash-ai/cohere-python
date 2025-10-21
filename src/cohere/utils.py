@@ -13,9 +13,15 @@ from . import EmbedResponse, EmbeddingsFloatsEmbedResponse, EmbeddingsByTypeEmbe
 from .datasets import DatasetsCreateResponse, DatasetsGetResponse
 from .overrides import get_fields
 
+_SUCCESS_STATES = {"complete", "validated"}
+
+_FAILED_STATES = {"unknown", "failed", "skipped", "cancelled"}
+
+_TERMINAL_STATES = _SUCCESS_STATES | _FAILED_STATES
+
 
 def get_terminal_states():
-    return get_success_states() | get_failed_states()
+    return _TERMINAL_STATES
 
 
 def get_success_states():
