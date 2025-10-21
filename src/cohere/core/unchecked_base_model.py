@@ -179,9 +179,15 @@ def construct_type(*, type_: typing.Type[typing.Any], object_: typing.Any) -> ty
         return None
 
     base_type = get_origin(type_) or type_
+    # Reduce repeated work for get_args/type checks by caching
+    maybe_annotation_members = None
     is_annotated = base_type == typing_extensions.Annotated
-    maybe_annotation_members = get_args(type_)
-    is_annotated_union = is_annotated and is_union(get_origin(maybe_annotation_members[0]))
+    if is_annotated:
+        maybe_annotation_members = get_args(type_)
+        maybe_annotation_members_0_origin = get_origin(maybe_annotation_members[0])
+        is_annotated_union = is_union(maybe_annotation_members_0_origin)
+    else:
+        is_annotated_union = False
 
     if base_type == typing.Any:
         return object_
@@ -189,32 +195,31 @@ def construct_type(*, type_: typing.Type[typing.Any], object_: typing.Any) -> ty
     if base_type == dict:
         if not isinstance(object_, typing.Mapping):
             return object_
-
         key_type, items_type = get_args(type_)
-        d = {
+        # Dict comprehension is faster for large dicts
+        return {
             construct_type(object_=key, type_=key_type): construct_type(object_=item, type_=items_type)
             for key, item in object_.items()
         }
-        return d
 
     if base_type == list:
         if not isinstance(object_, list):
             return object_
-
         inner_type = get_args(type_)[0]
+        # List comprehension instead of map
         return [construct_type(object_=entry, type_=inner_type) for entry in object_]
 
     if base_type == set:
         if not isinstance(object_, set) and not isinstance(object_, list):
             return object_
-
         inner_type = get_args(type_)[0]
+        # Set comprehension is faster
         return {construct_type(object_=entry, type_=inner_type) for entry in object_}
 
     if is_union(base_type) or is_annotated_union:
         return _convert_union_type(type_, object_)
 
-    # Cannot do an `issubclass` with a literal type, let's also just confirm we have a class before this call
+    # Avoid repeated isinstance checks and do local caching
     if (
         object_ is not None
         and not is_literal_type(type_)
