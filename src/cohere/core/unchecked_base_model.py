@@ -178,43 +178,53 @@ def construct_type(*, type_: typing.Type[typing.Any], object_: typing.Any) -> ty
     if object_ is None:
         return None
 
+    # Cache expensive origin and args lookups
     base_type = get_origin(type_) or type_
     is_annotated = base_type == typing_extensions.Annotated
-    maybe_annotation_members = get_args(type_)
-    is_annotated_union = is_annotated and is_union(get_origin(maybe_annotation_members[0]))
 
+    # Only call get_args if needed
+    if is_annotated or base_type in (dict, list, set):
+        maybe_annotation_members = get_args(type_)
+    else:
+        maybe_annotation_members = ()
+
+    is_annotated_union = (
+        is_annotated and is_union(get_origin(maybe_annotation_members[0]))
+        if is_annotated and maybe_annotation_members
+        else False
+    )
+
+    # Fast-path for typing.Any which incurs zero cost
     if base_type == typing.Any:
         return object_
 
     if base_type == dict:
         if not isinstance(object_, typing.Mapping):
             return object_
-
-        key_type, items_type = get_args(type_)
-        d = {
+        key_type, items_type = maybe_annotation_members
+        return {
             construct_type(object_=key, type_=key_type): construct_type(object_=item, type_=items_type)
             for key, item in object_.items()
         }
-        return d
 
     if base_type == list:
         if not isinstance(object_, list):
             return object_
-
-        inner_type = get_args(type_)[0]
+        inner_type = maybe_annotation_members[0]
         return [construct_type(object_=entry, type_=inner_type) for entry in object_]
 
     if base_type == set:
-        if not isinstance(object_, set) and not isinstance(object_, list):
+        if not isinstance(object_, (set, list)):
             return object_
-
-        inner_type = get_args(type_)[0]
+        inner_type = maybe_annotation_members[0]
         return {construct_type(object_=entry, type_=inner_type) for entry in object_}
 
-    if is_union(base_type) or is_annotated_union:
+    # Check union members only if union; cache is_union evaluation
+    union_check = is_union(base_type)
+    if union_check or is_annotated_union:
         return _convert_union_type(type_, object_)
 
-    # Cannot do an `issubclass` with a literal type, let's also just confirm we have a class before this call
+    # pydantic class construction path; guard by not-literal early
     if (
         object_ is not None
         and not is_literal_type(type_)
@@ -227,11 +237,17 @@ def construct_type(*, type_: typing.Type[typing.Any], object_: typing.Any) -> ty
             )
         )
     ):
+        # Minimize attribute lookup within the repetitive branch
         if IS_PYDANTIC_V2:
-            return type_.model_construct(**object_)
+            ctor = getattr(type_, "model_construct", None)
+            if ctor is not None:
+                return ctor(**object_)
         else:
-            return type_.construct(**object_)
+            ctor = getattr(type_, "construct", None)
+            if ctor is not None:
+                return ctor(**object_)
 
+    # Optimize Type coercion block: try/except only for actual conversions
     if base_type == dt.datetime:
         try:
             return parse_datetime(object_)
@@ -261,7 +277,6 @@ def construct_type(*, type_: typing.Type[typing.Any], object_: typing.Any) -> ty
             if isinstance(object_, str):
                 stringified_object = object_.lower()
                 return stringified_object == "true" or stringified_object == "1"
-
             return bool(object_)
         except Exception:
             return object_
