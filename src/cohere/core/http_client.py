@@ -10,13 +10,14 @@ from contextlib import asynccontextmanager, contextmanager
 from random import random
 
 import httpx
+from httpx._types import RequestFiles
+
 from .file import File, convert_file_dict_to_httpx_tuples
 from .force_multipart import FORCE_MULTIPART
 from .jsonable_encoder import jsonable_encoder
 from .query_encoder import encode_query
 from .remove_none_from_dict import remove_none_from_dict
 from .request_options import RequestOptions
-from httpx._types import RequestFiles
 
 INITIAL_RETRY_DELAY_SECONDS = 0.5
 MAX_RETRY_DELAY_SECONDS = 10
@@ -390,7 +391,7 @@ class AsyncHttpClient:
         omit: typing.Optional[typing.Any] = None,
         force_multipart: typing.Optional[bool] = None,
     ) -> httpx.Response:
-        base_url = self.get_base_url(base_url)
+        base_url_str = self.get_base_url(base_url)
         timeout = (
             request_options.get("timeout_in_seconds")
             if request_options is not None and request_options.get("timeout_in_seconds") is not None
@@ -408,61 +409,60 @@ class AsyncHttpClient:
 
         json_body, data_body = get_request_body(json=json, data=data, request_options=request_options, omit=omit)
 
-        # Add the input to each of these and do None-safety checks
-        response = await self.httpx_client.request(
-            method=method,
-            url=urllib.parse.urljoin(f"{base_url}/", path),
-            headers=jsonable_encoder(
-                remove_none_from_dict(
-                    {
-                        **self.base_headers(),
-                        **(headers if headers is not None else {}),
-                        **(request_options.get("additional_headers", {}) or {} if request_options is not None else {}),
-                    }
-                )
-            ),
-            params=encode_query(
-                jsonable_encoder(
-                    remove_none_from_dict(
-                        remove_omit_from_dict(
-                            {
-                                **(params if params is not None else {}),
-                                **(
-                                    request_options.get("additional_query_parameters", {}) or {}
-                                    if request_options is not None
-                                    else {}
-                                ),
-                            },
-                            omit,
-                        )
-                    )
-                )
-            ),
-            json=json_body,
-            data=data_body,
-            content=content,
-            files=request_files,
-            timeout=timeout,
+        url = urllib.parse.urljoin(f"{base_url_str}/", path)
+
+        # Precompute base headers and additional headers for reuse across retries
+        merged_headers = jsonable_encoder(
+            remove_none_from_dict(
+                {
+                    **self.base_headers(),
+                    **(headers if headers is not None else {}),
+                    **(request_options.get("additional_headers", {}) or {} if request_options is not None else {}),
+                }
+            )
         )
 
-        max_retries: int = request_options.get("max_retries", 0) if request_options is not None else 0
-        if _should_retry(response=response):
-            if max_retries > retries:
-                await asyncio.sleep(_retry_timeout(response=response, retries=retries))
-                return await self.request(
-                    path=path,
-                    method=method,
-                    base_url=base_url,
-                    params=params,
-                    json=json,
-                    content=content,
-                    files=files,
-                    headers=headers,
-                    request_options=request_options,
-                    retries=retries + 1,
-                    omit=omit,
+        merged_params = encode_query(
+            jsonable_encoder(
+                remove_none_from_dict(
+                    remove_omit_from_dict(
+                        {
+                            **(params if params is not None else {}),
+                            **(
+                                request_options.get("additional_query_parameters", {}) or {}
+                                if request_options is not None
+                                else {}
+                            ),
+                        },
+                        omit,
+                    )
                 )
-        return response
+            )
+        )
+
+        # Optimize retry: Use a loop instead of recursion to avoid call stack growth and redundant computation
+        attempt = retries
+        max_retries: int = request_options.get("max_retries", 0) if request_options is not None else 0
+
+        while True:
+            response = await self.httpx_client.request(
+                method=method,
+                url=url,
+                headers=merged_headers,
+                params=merged_params,
+                json=json_body,
+                data=data_body,
+                content=content,
+                files=request_files,
+                timeout=timeout,
+            )
+
+            if _should_retry(response=response):
+                if max_retries > attempt:
+                    await asyncio.sleep(_retry_timeout(response=response, retries=attempt))
+                    attempt += 1
+                    continue
+            return response
 
     @asynccontextmanager
     async def stream(
