@@ -401,86 +401,50 @@ class RawFinetuningClient:
             method="DELETE",
             request_options=request_options,
         )
+
         try:
-            if 200 <= _response.status_code < 300:
-                _data = typing.cast(
-                    DeleteFinetunedModelResponse,
-                    construct_type(
-                        type_=DeleteFinetunedModelResponse,  # type: ignore
-                        object_=_response.json(),
-                    ),
-                )
-                return HttpResponse(response=_response, data=_data)
-            if _response.status_code == 400:
-                raise BadRequestError(
-                    headers=dict(_response.headers),
-                    body=typing.cast(
-                        typing.Optional[typing.Any],
-                        construct_type(
-                            type_=typing.Optional[typing.Any],  # type: ignore
-                            object_=_response.json(),
-                        ),
-                    ),
-                )
-            if _response.status_code == 401:
-                raise UnauthorizedError(
-                    headers=dict(_response.headers),
-                    body=typing.cast(
-                        typing.Optional[typing.Any],
-                        construct_type(
-                            type_=typing.Optional[typing.Any],  # type: ignore
-                            object_=_response.json(),
-                        ),
-                    ),
-                )
-            if _response.status_code == 403:
-                raise ForbiddenError(
-                    headers=dict(_response.headers),
-                    body=typing.cast(
-                        typing.Optional[typing.Any],
-                        construct_type(
-                            type_=typing.Optional[typing.Any],  # type: ignore
-                            object_=_response.json(),
-                        ),
-                    ),
-                )
-            if _response.status_code == 404:
-                raise NotFoundError(
-                    headers=dict(_response.headers),
-                    body=typing.cast(
-                        typing.Optional[typing.Any],
-                        construct_type(
-                            type_=typing.Optional[typing.Any],  # type: ignore
-                            object_=_response.json(),
-                        ),
-                    ),
-                )
-            if _response.status_code == 500:
-                raise InternalServerError(
-                    headers=dict(_response.headers),
-                    body=typing.cast(
-                        typing.Optional[typing.Any],
-                        construct_type(
-                            type_=typing.Optional[typing.Any],  # type: ignore
-                            object_=_response.json(),
-                        ),
-                    ),
-                )
-            if _response.status_code == 503:
-                raise ServiceUnavailableError(
-                    headers=dict(_response.headers),
-                    body=typing.cast(
-                        typing.Optional[typing.Any],
-                        construct_type(
-                            type_=typing.Optional[typing.Any],  # type: ignore
-                            object_=_response.json(),
-                        ),
-                    ),
-                )
+            # Parse JSON only once, reuse for all error and success paths
             _response_json = _response.json()
         except JSONDecodeError:
             raise ApiError(status_code=_response.status_code, headers=dict(_response.headers), body=_response.text)
-        raise ApiError(status_code=_response.status_code, headers=dict(_response.headers), body=_response_json)
+
+        if 200 <= _response.status_code < 300:
+            _data = typing.cast(
+                DeleteFinetunedModelResponse,
+                construct_type(
+                    type_=DeleteFinetunedModelResponse,  # type: ignore
+                    object_=_response_json,
+                ),
+            )
+            return HttpResponse(response=_response, data=_data)
+
+        headers = dict(_response.headers)
+
+        # Error handling branches (avoid redundant _response.json() decoding)
+        err_body = typing.cast(
+            typing.Optional[typing.Any],
+            construct_type(
+                type_=typing.Optional[typing.Any],  # type: ignore
+                object_=_response_json,
+            ),
+        )
+
+        code = _response.status_code
+        if code == 400:
+            raise BadRequestError(headers=headers, body=err_body)
+        if code == 401:
+            raise UnauthorizedError(headers=headers, body=err_body)
+        if code == 403:
+            raise ForbiddenError(headers=headers, body=err_body)
+        if code == 404:
+            raise NotFoundError(headers=headers, body=err_body)
+        if code == 500:
+            raise InternalServerError(headers=headers, body=err_body)
+        if code == 503:
+            raise ServiceUnavailableError(headers=headers, body=err_body)
+
+        # Default: raise ApiError for other status codes
+        raise ApiError(status_code=code, headers=headers, body=_response_json)
 
     def update_finetuned_model(
         self,
