@@ -7,20 +7,13 @@ import uuid
 
 import pydantic
 import typing_extensions
-from .pydantic_utilities import (
-    IS_PYDANTIC_V2,
-    ModelField,
-    UniversalBaseModel,
-    get_args,
-    get_origin,
-    is_literal_type,
-    is_union,
-    parse_date,
-    parse_datetime,
-    parse_obj_as,
-)
-from .serialization import get_field_to_alias_mapping
 from pydantic_core import PydanticUndefined
+
+from .pydantic_utilities import (IS_PYDANTIC_V2, ModelField,
+                                 UniversalBaseModel, get_args, get_origin,
+                                 is_literal_type, is_union, parse_date,
+                                 parse_datetime, parse_obj_as)
+from .serialization import get_field_to_alias_mapping
 
 
 class UnionMetadata:
@@ -179,6 +172,14 @@ def construct_type(*, type_: typing.Type[typing.Any], object_: typing.Any) -> ty
         return None
 
     base_type = get_origin(type_) or type_
+
+    # Early fast return for direct primitive types
+    if base_type in (str, int, float, bool, type(None)):
+        try:
+            return base_type(object_)
+        except Exception:
+            return object_
+
     is_annotated = base_type == typing_extensions.Annotated
     maybe_annotation_members = get_args(type_)
     is_annotated_union = is_annotated and is_union(get_origin(maybe_annotation_members[0]))
