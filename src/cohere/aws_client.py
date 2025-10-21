@@ -14,6 +14,11 @@ from .core import construct_type
 from .manually_maintained.lazy_aws_deps import lazy_boto3, lazy_botocore
 from .client_v2 import ClientV2
 
+_INT_VERSION = {
+    "v1": 1,
+    "v2": 2,
+}
+
 class AwsClient(Client):
     def __init__(
             self,
@@ -285,9 +290,4 @@ def get_url(
 
 
 def get_api_version(*, version: str):
-    int_version = {
-        "v1": 1,
-        "v2": 2,
-    }
-
-    return int_version.get(version, 1)
+    return _INT_VERSION.get(version, 1)
