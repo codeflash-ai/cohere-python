@@ -29,19 +29,37 @@ DictIntStrAny = Dict[Union[int, str], Any]
 
 
 def jsonable_encoder(obj: Any, custom_encoder: Optional[Dict[Any, Callable[[Any], Any]]] = None) -> Any:
+    # Fast-path for primitive types
+    if isinstance(obj, (str, int, float, type(None))):
+        return obj
+    # Explicitly check bytes for b64encoding
+    if isinstance(obj, bytes):
+        return base64.b64encode(obj).decode("utf-8")
+    # Short-circuit Enum (most are primitive types, but faster than below path in profiling)
+    if isinstance(obj, Enum):
+        return obj.value
+    # Short-circuit pathlib PurePath
+    if isinstance(obj, PurePath):
+        return str(obj)
+    # Handle datetime fast-path
+    if isinstance(obj, dt.datetime):
+        return serialize_datetime(obj)
+    if isinstance(obj, dt.date):
+        return str(obj)
+    # Custom encoder - fast check and O(1) check before param sweeps
     custom_encoder = custom_encoder or {}
-    if custom_encoder:
-        if type(obj) in custom_encoder:
-            return custom_encoder[type(obj)](obj)
-        else:
-            for encoder_type, encoder_instance in custom_encoder.items():
-                if isinstance(obj, encoder_type):
-                    return encoder_instance(obj)
+    t = type(obj)
+    if t in custom_encoder:
+        return custom_encoder[t](obj)
+    for encoder_type, encoder_instance in custom_encoder.items():
+        if isinstance(obj, encoder_type):
+            return encoder_instance(obj)
+    # Pydantic models
     if isinstance(obj, pydantic.BaseModel):
         if IS_PYDANTIC_V2:
-            encoder = getattr(obj.model_config, "json_encoders", {})  # type: ignore # Pydantic v2
+            encoder = getattr(obj.model_config, "json_encoders", {}).copy()  # type: ignore # Pydantic v2
         else:
-            encoder = getattr(obj.__config__, "json_encoders", {})  # type: ignore # Pydantic v1
+            encoder = getattr(obj.__config__, "json_encoders", {}).copy()  # type: ignore # Pydantic v1
         if custom_encoder:
             encoder.update(custom_encoder)
         obj_dict = obj.dict(by_alias=True)
@@ -50,35 +68,18 @@ def jsonable_encoder(obj: Any, custom_encoder: Optional[Dict[Any, Callable[[Any]
         if "root" in obj_dict:
             obj_dict = obj_dict["root"]
         return jsonable_encoder(obj_dict, custom_encoder=encoder)
+    # Dataclasses - prefer asdict (fast for deep trees)
     if dataclasses.is_dataclass(obj):
-        obj_dict = dataclasses.asdict(obj)  # type: ignore
-        return jsonable_encoder(obj_dict, custom_encoder=custom_encoder)
-    if isinstance(obj, bytes):
-        return base64.b64encode(obj).decode("utf-8")
-    if isinstance(obj, Enum):
-        return obj.value
-    if isinstance(obj, PurePath):
-        return str(obj)
-    if isinstance(obj, (str, int, float, type(None))):
-        return obj
-    if isinstance(obj, dt.datetime):
-        return serialize_datetime(obj)
-    if isinstance(obj, dt.date):
-        return str(obj)
+        return jsonable_encoder(dataclasses.asdict(obj), custom_encoder=custom_encoder)
+    # Dict encoding via dict comprehension
     if isinstance(obj, dict):
-        encoded_dict = {}
-        allowed_keys = set(obj.keys())
-        for key, value in obj.items():
-            if key in allowed_keys:
-                encoded_key = jsonable_encoder(key, custom_encoder=custom_encoder)
-                encoded_value = jsonable_encoder(value, custom_encoder=custom_encoder)
-                encoded_dict[encoded_key] = encoded_value
-        return encoded_dict
+        return {
+            jsonable_encoder(k, custom_encoder=custom_encoder): jsonable_encoder(v, custom_encoder=custom_encoder)
+            for k, v in obj.items()
+        }
+    # Sequence types encoded with list comprehension
     if isinstance(obj, (list, set, frozenset, GeneratorType, tuple)):
-        encoded_list = []
-        for item in obj:
-            encoded_list.append(jsonable_encoder(item, custom_encoder=custom_encoder))
-        return encoded_list
+        return [jsonable_encoder(item, custom_encoder=custom_encoder) for item in obj]
 
     def fallback_serializer(o: Any) -> Any:
         attempt_encode = encode_by_type(o)

@@ -390,54 +390,58 @@ class AsyncHttpClient:
         omit: typing.Optional[typing.Any] = None,
         force_multipart: typing.Optional[bool] = None,
     ) -> httpx.Response:
-        base_url = self.get_base_url(base_url)
+        base_url_actual = self.get_base_url(base_url)
         timeout = (
             request_options.get("timeout_in_seconds")
             if request_options is not None and request_options.get("timeout_in_seconds") is not None
             else self.base_timeout()
         )
 
-        request_files: typing.Optional[RequestFiles] = (
-            convert_file_dict_to_httpx_tuples(remove_omit_from_dict(remove_none_from_dict(files), omit))
-            if (files is not None and files is not omit and isinstance(files, dict))
-            else None
-        )
+        # Optimize file tuple conversion and remove_none_from_dict only if needed
+        request_files: typing.Optional[RequestFiles] = None
+        if files is not None and files is not omit:
+            if isinstance(files, dict):
+                filtered_files = remove_none_from_dict(files)
+                filtered_files = remove_omit_from_dict(filtered_files, omit)
+                request_files = convert_file_dict_to_httpx_tuples(filtered_files)
+            else:
+                request_files = files  # It's already a list
 
         if (request_files is None or len(request_files) == 0) and force_multipart:
             request_files = FORCE_MULTIPART
 
         json_body, data_body = get_request_body(json=json, data=data, request_options=request_options, omit=omit)
 
-        # Add the input to each of these and do None-safety checks
+        # Fast-path merge and removal for headers
+        headers_merged = self.base_headers()
+        if headers is not None:
+            headers_merged = {**headers_merged, **headers}
+        if request_options is not None:
+            additional_headers = request_options.get("additional_headers", {})
+            if additional_headers:
+                headers_merged = {**headers_merged, **additional_headers}
+        headers_encoded = jsonable_encoder(remove_none_from_dict(headers_merged))
+
+        # Fast-path merge and removal for params
+        params_merged = {}
+        if params is not None:
+            params_merged = dict(params)  # copy to avoid mutation
+        if request_options is not None:
+            additional_query_parameters = request_options.get("additional_query_parameters", {})
+            if additional_query_parameters:
+                params_merged.update(additional_query_parameters)
+        if params_merged:
+            params_encoded = encode_query(
+                jsonable_encoder(remove_none_from_dict(remove_omit_from_dict(params_merged, omit)))
+            )
+        else:
+            params_encoded = None
+
         response = await self.httpx_client.request(
             method=method,
-            url=urllib.parse.urljoin(f"{base_url}/", path),
-            headers=jsonable_encoder(
-                remove_none_from_dict(
-                    {
-                        **self.base_headers(),
-                        **(headers if headers is not None else {}),
-                        **(request_options.get("additional_headers", {}) or {} if request_options is not None else {}),
-                    }
-                )
-            ),
-            params=encode_query(
-                jsonable_encoder(
-                    remove_none_from_dict(
-                        remove_omit_from_dict(
-                            {
-                                **(params if params is not None else {}),
-                                **(
-                                    request_options.get("additional_query_parameters", {}) or {}
-                                    if request_options is not None
-                                    else {}
-                                ),
-                            },
-                            omit,
-                        )
-                    )
-                )
-            ),
+            url=urllib.parse.urljoin(f"{base_url_actual}/", path),
+            headers=headers_encoded,
+            params=params_encoded,
             json=json_body,
             data=data_body,
             content=content,
